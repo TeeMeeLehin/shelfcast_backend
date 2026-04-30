@@ -1,0 +1,24 @@
+fastapi
+uvicorn[standard]
+pydantic[email]
+pydantic-settings
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+supabase
+openai
+anthropic
+pytrends
+requests
+beautifulsoup4
+apify-client
+celery[redis]
+psycopg2-binary
+python-dotenv
+resend
+# Phase 2 additions
+pandas
+openpyxl
+cryptography
+redis
+httpx
