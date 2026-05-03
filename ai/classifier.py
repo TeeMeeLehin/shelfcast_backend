@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-BATCH_SIZE = 20
+BATCH_SIZE = 50
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Local Context — Ghana-specific product knowledge
@@ -42,13 +42,17 @@ Always prefer specific categories over vague ones (e.g. "Instant Noodles" > "Foo
 """
 
 CLASSIFICATION_SCHEMA = """
-Return a JSON array where each element has:
+Return a JSON object with a "classifications" key containing an array of objects:
 {
-  "sku_id": "...",
-  "brand": "Brand name or null if generic/unknown",
-  "category": "Product category (specific)",
-  "match_terms": ["keyword1", "keyword2", ...],
-  "confidence": "high" | "medium" | "low"
+  "classifications": [
+    {
+      "sku_id": "...",
+      "brand": "Brand name or null if generic/unknown",
+      "category": "Product category (specific)",
+      "match_terms": ["keyword1", "keyword2", ...],
+      "confidence": "high" | "medium" | "low"
+    }
+  ]
 }
 
 match_terms should include:
@@ -57,7 +61,7 @@ match_terms should include:
 - Relevant Twi/local language equivalents if known (e.g. "aduane" for food)
 - Minimum 3 terms, maximum 8 terms
 
-Respond with ONLY the JSON array — no prose, no markdown.
+Respond with ONLY the JSON object — no prose, no markdown.
 """
 
 
@@ -97,15 +101,25 @@ def classify_batch(skus: list[dict]) -> list[dict]:
             response_format={"type": "json_object"},
         )
         raw = response.choices[0].message.content
+        logger.info(f"AI Raw Response (Preview): {raw[:300]}...")
         data = json.loads(raw)
 
-        # Handle both {"results": [...]} and direct array
-        if isinstance(data, list):
-            return data
-        for key in data:
-            if isinstance(data[key], list):
-                return data[key]
-        return []
+        # Look specifically for the "classifications" key
+        results = data.get("classifications", [])
+        
+        # Fallback: if they ignored the wrapper and returned a list at any other key
+        if not results and not isinstance(data, list):
+            for key in data:
+                if isinstance(data[key], list):
+                    results = data[key]
+                    break
+        elif isinstance(data, list):
+            results = data
+        
+        # Ensure all elements are dictionaries and have sku_id
+        valid_results = [r for r in results if isinstance(r, dict) and "sku_id" in r]
+        logger.info(f"Accepted {len(valid_results)} valid classification objects.")
+        return valid_results
 
     except Exception as e:
         logger.error("GPT-4o classification failed for batch: %s", e)
@@ -113,11 +127,15 @@ def classify_batch(skus: list[dict]) -> list[dict]:
 
 
 def _is_low_confidence(result: dict) -> bool:
+    # Handle None values by defaulting to empty string before lower()
+    brand = (result.get("brand") or "").lower()
+    category = (result.get("category") or "").lower()
+    
     if result.get("confidence") == "low":
         return True
-    if result.get("brand", "").lower() in ("unknown", ""):
+    if brand in ("unknown", ""):
         return True
-    if result.get("category", "").lower() in ("unknown", "general", "other", ""):
+    if category in ("unknown", "general", "other", ""):
         return True
     if len(result.get("match_terms", [])) < 3:
         return True
@@ -133,19 +151,18 @@ def classify_unclassified_skus(tenant_id: str) -> dict:
     from app.db import supabase
 
     # Fetch unclassified SKUs
+    # Only fetch rows that are pending and have NO brand (source of truth for re-runs)
     res = supabase.table("catalogue").select("sku_id, sku_name").eq(
         "tenant_id", tenant_id
-    ).eq(
-        "classification_status", "pending"
-    ).is_("brand", "null").execute()
+    ).eq("classification_status", "pending").is_("brand", "null").execute()
 
     skus = res.data or []
     if not skus:
         logger.info("No unclassified SKUs for tenant %s.", tenant_id)
         return {"classified": 0, "needs_review": 0}
 
-    classified = 0
-    needs_review = 0
+    classified_count = 0
+    review_count = 0
 
     # Process in batches
     for i in range(0, len(skus), BATCH_SIZE):
@@ -153,27 +170,29 @@ def classify_unclassified_skus(tenant_id: str) -> dict:
         results = classify_batch(batch)
 
         for result in results:
-            sku_id = result.get("sku_id")
-            if not sku_id:
+            try:
+                sku_id = result.get("sku_id")
+                if not sku_id:
+                    continue
+
+                low_conf = _is_low_confidence(result)
+                status = "needs_review" if low_conf else "classified"
+
+                supabase.table("catalogue").update({
+                    "brand":                 result.get("brand"),
+                    "category":              result.get("category"),
+                    "match_terms":           result.get("match_terms", []),
+                    "classification_status": status,
+                }).eq("tenant_id", tenant_id).eq("sku_id", sku_id).execute()
+
+                if low_conf:
+                    review_count += 1
+                else:
+                    classified_count += 1
+            except Exception as e:
+                logger.error(f"Failed to update SKU {result.get('sku_id')}: {e}")
                 continue
 
-            low_conf = _is_low_confidence(result)
-            status = "needs_review" if low_conf else "classified"
-
-            supabase.table("catalogue").update({
-                "brand":                 result.get("brand"),
-                "category":              result.get("category"),
-                "match_terms":           result.get("match_terms", []),
-                "classification_status": status,
-            }).eq("tenant_id", tenant_id).eq("sku_id", sku_id).execute()
-
-            if low_conf:
-                needs_review += 1
-            else:
-                classified += 1
-
-    logger.info(
-        "Classification for tenant %s: %d classified, %d need review.",
-        tenant_id, classified, needs_review,
-    )
-    return {"classified": classified, "needs_review": needs_review}
+    summary = {"classified": classified_count, "needs_review": review_count}
+    logger.info(f"Classification for tenant {tenant_id}: {summary}")
+    return summary

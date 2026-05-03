@@ -1,10 +1,12 @@
-# Python
+# Python & Environment
 __pycache__/
 *.py[cod]
 *$py.class
 venv/
 env/
 .env
+.venv
+*.env
 .pytest_cache/
 .coverage
 htmlcov/
@@ -14,11 +16,14 @@ htmlcov/
 *.db
 *.sqlite3
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Project Specific
+# ShelfCast Artifacts (Tenant Specific)
+corpus_*.json
+intelligence_sample.json
 data_artifacts/
 *.docx
 *-extracted.txt
+*.md
+
+# OS
+.DS_Store
+Thumbs.db

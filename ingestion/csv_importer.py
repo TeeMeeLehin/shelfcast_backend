@@ -77,10 +77,35 @@ def run_csv_import(
         # 4. Normalise (pass default_city for rows with no city column)
         normalised = normalise(clean, tenant_id, job_id, source="csv", default_city=default_city)
 
+        # 4.5. Backfill names for SKUs that were missing names in this CSV
+        # (This handles the case where a Sales History CSV has only SKU IDs)
+        unknown_skus = list(set(r["sku_id"] for r in clean if r["sku_name"] == "(Unknown Product)"))
+        if unknown_skus:
+            # Fetch existing names from catalogue in batches to avoid URL length limits
+            name_map = {}
+            batch_size = 200
+            for i in range(0, len(unknown_skus), batch_size):
+                batch = unknown_skus[i : i + batch_size]
+                res = db.table("catalogue").select("sku_id, sku_name").eq("tenant_id", tenant_id).in_("sku_id", batch).execute()
+                for row in res.data:
+                    name_map[row["sku_id"]] = row["sku_name"]
+            
+            # Apply backfill to both catalogue and sales rows
+            for cat_row in normalised["catalogue_rows"]:
+                if cat_row["sku_name"] == "(Unknown Product)":
+                    cat_row["sku_name"] = name_map.get(cat_row["sku_id"], "(Unknown Product)")
+            
+            for sale_row in normalised["sales_rows"]:
+                if sale_row.get("sku_name") == "(Unknown Product)":
+                    sale_row["sku_name"] = name_map.get(sale_row["sku_id"], "(Unknown Product)")
+
         # 5. Write catalogue (upsert on sku_id + tenant_id)
-        if normalised["catalogue_rows"]:
+        # CRITICAL: Do NOT upsert catalogue rows that still have "(Unknown Product)" 
+        # as we don't want to create "empty" catalogue entries with no names.
+        valid_cat_rows = [r for r in normalised["catalogue_rows"] if r["sku_name"] != "(Unknown Product)"]
+        if valid_cat_rows:
             db.table("catalogue").upsert(
-                normalised["catalogue_rows"],
+                valid_cat_rows,
                 on_conflict="tenant_id,sku_id",
             ).execute()
 

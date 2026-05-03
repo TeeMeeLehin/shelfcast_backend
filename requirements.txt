@@ -22,3 +22,7 @@ openpyxl
 cryptography
 redis
 httpx
+
+# Phase 3 additions
+feedparser
+praw

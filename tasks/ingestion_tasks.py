@@ -6,6 +6,7 @@ All heavy processing runs here — never in the FastAPI request cycle.
 """
 import logging
 from celery import Celery
+from celery.schedules import crontab
 import os
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,12 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    beat_schedule={
+        "run-nightly-signal-collection": {
+            "task": "tasks.run_nightly_collection",
+            "schedule": crontab(hour=1, minute=0),  # 01:00 AM
+        },
+    }
 )
 
 

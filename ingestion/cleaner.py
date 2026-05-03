@@ -67,8 +67,13 @@ def _strip_variant_suffix(name: str) -> str:
     return SIZE_SUFFIX_PATTERN.sub("", name).strip()
 
 
-def _row_hash(tenant_id: str, sku_id: str, sku_name: str) -> str:
-    raw = f"{tenant_id}:{sku_id}:{sku_name.lower().strip()}"
+def _row_hash(tenant_id: str, row: dict, name_normalised: str) -> str:
+    """Hash the entire row to detect strict exact duplicates, allowing multiple sales transactions for the same SKU."""
+    raw = (
+        f"{tenant_id}:{row.get('sku_id', '')}:{name_normalised.lower()}:"
+        f"{row.get('sale_date', '')}:{row.get('city', '')}:"
+        f"{row.get('units_sold', 0)}:{row.get('revenue', 0)}"
+    )
     return hashlib.md5(raw.encode()).hexdigest()
 
 
@@ -87,9 +92,14 @@ def _coerce_date(value) -> tuple[date | None, str | None]:
         return None, "invalid_date"
     if isinstance(value, (date, datetime)):
         return value.date() if isinstance(value, datetime) else value, None
+    # Clean the string: take only the first part if it has a space (e.g. "2026-02-20 02:51:42" -> "2026-02-20")
+    s = str(value).strip()
+    if " " in s:
+        s = s.split(" ")[0]
+
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
         try:
-            return datetime.strptime(str(value).strip(), fmt).date(), None
+            return datetime.strptime(s, fmt).date(), None
         except ValueError:
             continue
     return None, "invalid_date"
@@ -130,9 +140,8 @@ def pass1_structural(row: dict, column_map: dict) -> tuple[dict | None, str | No
     if _is_invalid_sku(sku):
         return None, "invalid_sku_format"
 
-    # 3. Missing product name
-    if name_raw is None or str(name_raw).strip().lower() in ("nan", "", "none"):
-        return None, "missing_product_name"
+    # 3. Handle product name (optional if SKU is present for sales history matching)
+    name = str(name_raw).strip() if name_raw is not None and str(name_raw).strip().lower() not in ("nan", "", "none") else "(Unknown Product)"
 
     # 4. Coerce numeric fields
     units_raw = get("units_sold")
@@ -159,7 +168,7 @@ def pass1_structural(row: dict, column_map: dict) -> tuple[dict | None, str | No
 
     return {
         "sku_id":       sku,
-        "sku_name":     str(name_raw).strip(),
+        "sku_name":     name,
         "units_sold":   units or 0.0,
         "stock_level":  stock or 0.0,
         "revenue":      revenue or 0.0,
@@ -187,7 +196,7 @@ def pass2_semantic(row: dict, seen_hashes: set, tenant_id: str) -> tuple[dict | 
         return None, "test_record"
 
     # 2. Exact duplicate detection within this import batch
-    row_hash = _row_hash(tenant_id, row["sku_id"], name_normalised)
+    row_hash = _row_hash(tenant_id, row, name_normalised)
     if row_hash in seen_hashes:
         return None, "duplicate_row"
     seen_hashes.add(row_hash)

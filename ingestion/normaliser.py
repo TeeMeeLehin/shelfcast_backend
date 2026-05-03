@@ -116,6 +116,7 @@ def to_sales_history_rows(
             aggregated[key] = {
                 "tenant_id":   tenant_id,
                 "sku_id":      sku_id,
+                "sku_name":    r.get("sku_name"),
                 "units_sold":  u_sold,
                 "revenue":     rev,
                 "city":        city,

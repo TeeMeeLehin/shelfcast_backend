@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, intelligence, catalogue, ingest, integrations
+from app.routers import auth, intelligence, catalogue, ingest, integrations, dashboard
 
 app = FastAPI(
     title="ShelfCast Backend",
@@ -26,6 +26,7 @@ app.include_router(intelligence.router, prefix="/intelligence", tags=["Intellige
 app.include_router(catalogue.router, prefix="/catalogue", tags=["Catalogue"])
 app.include_router(ingest.router, prefix="/ingest", tags=["Ingestion"])
 app.include_router(integrations.router, prefix="/integrations", tags=["Integrations"])
+app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
 
 if __name__ == "__main__":
     import uvicorn

@@ -20,7 +20,7 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "revenue":      ["revenue", "total revenue", "sales value", "amount", "total amount",
                      "value", "turnover", "net sales", "gross sales", "total sales"],
     "sale_date":    ["date", "sale date", "transaction date", "period", "order date",
-                     "sales date", "invoice date", "tx date"],
+                     "sales date", "invoice date", "tx date", "timestamp"],
     "city":         ["city", "branch", "location", "store", "region", "area",
                      "branch name", "outlet", "shop", "warehouse"],
     "price":        ["price", "unit price", "selling price", "retail price",
@@ -29,7 +29,7 @@ COLUMN_ALIASES: dict[str, list[str]] = {
                        "intake", "total purchased"],
 }
 
-REQUIRED_FIELDS = {"sku_id", "sku_name"}
+REQUIRED_FIELDS = {"sku_id"}
 FUZZY_THRESHOLD = 0.75  # Minimum similarity ratio to accept a fuzzy match
 
 
