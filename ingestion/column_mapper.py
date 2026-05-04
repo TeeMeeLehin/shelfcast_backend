@@ -24,7 +24,7 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "city":         ["city", "branch", "location", "store", "region", "area",
                      "branch name", "outlet", "shop", "warehouse"],
     "price":        ["price", "unit price", "selling price", "retail price",
-                     "unit cost", "cost price"],
+                     "unit cost", "cost price", "unit price ghs"],
     "total_inputted": ["total inputted", "total received", "total in", "received qty",
                        "intake", "total purchased"],
 }

@@ -1,1 +1,2 @@
-# This file makes the routers directory a Python package.
+# Export all routers for easy access in main.py
+from . import auth, intelligence, catalogue, ingest, integrations, dashboard
