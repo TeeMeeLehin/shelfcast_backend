@@ -10,11 +10,12 @@ from supabase import create_client
 router = APIRouter()
 
 class SignupRequest(BaseModel):
-    tenant_name: str
     email: EmailStr
     password: str
-    city: Optional[str] = None        # Primary operating city for geo-intelligence
-    country: str = "Ghana"            # Default market
+
+class OnboardingRequest(BaseModel):
+    retailer_name: str
+    cities: list[str]
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -23,7 +24,7 @@ class LoginRequest(BaseModel):
 class InviteRequest(BaseModel):
     email: EmailStr
     role: str = "manager"
-    city: Optional[str] = None        # City where this manager operates
+    cities: list[str] = []
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
@@ -36,10 +37,9 @@ async def signup(request: SignupRequest):
         raise HTTPException(status_code=500, detail="Database client not initialized")
         
     try:
-        # 1. Create the tenant first to get the generated tenant_id
-        # We use service_role to bypass RLS for this initial creation
+        # 1. Create a "Pending" tenant profile
         tenant_res = supabase.table("tenants").insert({
-            "name": request.tenant_name
+            "name": f"Pending ({request.email})"
         }).execute()
         
         if not tenant_res.data:
@@ -47,12 +47,11 @@ async def signup(request: SignupRequest):
             
         tenant_id = tenant_res.data[0]["id"]
         
-        # 2. Create the user in Supabase Auth via Admin API
-        # Store tenant_id in app_metadata so it gets included in the JWT
+        # 2. Create the user in Supabase Auth
         auth_res = supabase.auth.admin.create_user({
             "email": request.email,
             "password": request.password,
-            "email_confirm": True, # Auto-confirm for MVP
+            "email_confirm": True,
             "app_metadata": {
                 "tenant_id": tenant_id,
                 "role": "admin"
@@ -61,18 +60,16 @@ async def signup(request: SignupRequest):
         
         user_id = auth_res.user.id
         
-        # 3. Create the user record in the public.users table (with location)
+        # 3. Create the basic user record
         supabase.table("users").insert({
             "id": user_id,
             "tenant_id": tenant_id,
             "email": request.email,
             "role": "admin",
-            "city": request.city,
-            "country": request.country,
+            "cities": [] # New JSONB column
         }).execute()
         
-        # 4. Automatically log them in to return a session using a temporary client
-        # to avoid polluting the global service_role client with a user session.
+        # 4. Return session
         temp_client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_ANON_KEY"))
         login_res = temp_client.auth.sign_in_with_password({
             "email": request.email,
@@ -80,18 +77,43 @@ async def signup(request: SignupRequest):
         })
         
         return {
-            "message": "Tenant and admin user created successfully",
-            "tenant_id": tenant_id,
-            "user_id": user_id,
+            "message": "Basic account created. Please complete onboarding.",
             "access_token": login_res.session.access_token,
             "refresh_token": login_res.session.refresh_token
         }
         
     except Exception as e:
-        # Naive rollback: if something fails, try to delete the tenant
         if 'tenant_id' in locals():
             supabase.table("tenants").delete().eq("id", tenant_id).execute()
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/onboarding")
+async def complete_onboarding(request: OnboardingRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Stage 2: Capture retailer name and monitoring locations.
+    """
+    supabase = get_db()
+    tenant_id = current_user["tenant_id"]
+    user_id = current_user["user_id"]
+    
+    # Format locations
+    locations = [{"city": city.strip(), "country": "Ghana"} for city in request.cities]
+    
+    try:
+        # Update Tenant
+        supabase.table("tenants").update({
+            "name": request.retailer_name,
+            "locations": locations
+        }).eq("id", tenant_id).execute()
+        
+        # Also sync locations to the Admin User's cities
+        supabase.table("users").update({
+            "cities": request.cities
+        }).eq("id", user_id).execute()
+        
+        return {"message": "Onboarding complete. Welcome to ShelfCast!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Onboarding failed: {str(e)}")
 
 @router.post("/login")
 async def login(request: LoginRequest):
@@ -137,7 +159,7 @@ async def invite_user(request: InviteRequest, current_user: dict = Depends(requi
                 "role": request.role,
             },
             "user_metadata": {
-                "city": request.city,
+                "cities": request.cities,
             }
         })
 
@@ -149,7 +171,7 @@ async def invite_user(request: InviteRequest, current_user: dict = Depends(requi
             "tenant_id": tenant_id,
             "email": request.email,
             "role": request.role,
-            "city": request.city,
+            "cities": request.cities,
         }).execute()
 
         # 4. Send invite email via Resend — independently of user creation.
