@@ -34,8 +34,9 @@ async def ingest_csv(
         "id": job_id,
         "tenant_id": tenant_id,
         "user_id": user_id,
-        "filename": file.filename,
+        "file_name": file.filename,
         "data_type": data_type,
+        "source": "csv",
         "status": "pending"
     }).execute()
 
