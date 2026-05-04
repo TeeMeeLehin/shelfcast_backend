@@ -5,6 +5,7 @@ from app.db import get_db
 from app.deps import get_current_user, require_admin
 import os
 import resend
+from datetime import datetime, timezone
 from supabase import create_client
 
 router = APIRouter()
@@ -87,6 +88,31 @@ async def signup(request: SignupRequest):
             supabase.table("tenants").delete().eq("id", tenant_id).execute()
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.get("/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    """
+    Returns the current user's profile and their tenant's onboarding_step.
+    Used by the frontend on load to resume the signup flow at the right step.
+    """
+    supabase = get_db()
+    tenant_id = current_user["tenant_id"]
+
+    tenant_res = supabase.table("tenants").select("name, onboarding_step, trial_started_at").eq("id", tenant_id).single().execute()
+    if not tenant_res.data:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant = tenant_res.data
+    return {
+        "user_id": current_user["user_id"],
+        "email": current_user["email"],
+        "role": current_user["role"],
+        "tenant_id": tenant_id,
+        "tenant_name": tenant["name"],
+        "onboarding_step": tenant.get("onboarding_step", 1),
+        "trial_started_at": tenant.get("trial_started_at"),
+    }
+
+
 @router.post("/onboarding")
 async def complete_onboarding(request: OnboardingRequest, current_user: dict = Depends(get_current_user)):
     """
@@ -95,25 +121,51 @@ async def complete_onboarding(request: OnboardingRequest, current_user: dict = D
     supabase = get_db()
     tenant_id = current_user["tenant_id"]
     user_id = current_user["user_id"]
-    
+
     # Format locations
     locations = [{"city": city.strip(), "country": "Ghana"} for city in request.cities]
-    
+
     try:
-        # Update Tenant
         supabase.table("tenants").update({
             "name": request.retailer_name,
-            "locations": locations
+            "locations": locations,
+            "onboarding_step": 2,
         }).eq("id", tenant_id).execute()
-        
-        # Also sync locations to the Admin User's cities
+
         supabase.table("users").update({
             "cities": request.cities
         }).eq("id", user_id).execute()
-        
+
         return {"message": "Onboarding complete. Welcome to ShelfCast!"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Onboarding failed: {str(e)}")
+
+
+@router.post("/start-trial")
+async def start_trial(current_user: dict = Depends(get_current_user)):
+    """
+    Stage 3: User accepted the free trial card. Stamps trial_started_at and
+    advances onboarding_step to 3 so the frontend can redirect to /dashboard
+    on any future visit.
+    """
+    supabase = get_db()
+    tenant_id = current_user["tenant_id"]
+
+    tenant_res = supabase.table("tenants").select("onboarding_step, trial_started_at").eq("id", tenant_id).single().execute()
+    if not tenant_res.data:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Idempotent — don't reset the clock if called twice
+    if tenant_res.data.get("trial_started_at"):
+        return {"message": "Trial already active.", "trial_started_at": tenant_res.data["trial_started_at"]}
+
+    now = datetime.now(timezone.utc).isoformat()
+    supabase.table("tenants").update({
+        "onboarding_step": 3,
+        "trial_started_at": now,
+    }).eq("id", tenant_id).execute()
+
+    return {"message": "Free trial started.", "trial_started_at": now}
 
 @router.post("/login")
 async def login(request: LoginRequest):

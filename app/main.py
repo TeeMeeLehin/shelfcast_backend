@@ -1,12 +1,22 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import auth, intelligence, catalogue, ingest, integrations, dashboard
+from app.migrations import run_migrations
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    run_migrations()
+    yield
+
 
 app = FastAPI(
     title="ShelfCast Backend",
     description="Retail Intelligence Engine for FMCG",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS origins from environment
