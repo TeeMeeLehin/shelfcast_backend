@@ -27,3 +27,6 @@ data_artifacts/
 # OS
 .DS_Store
 Thumbs.db
+
+.kiro
+.kiro/
