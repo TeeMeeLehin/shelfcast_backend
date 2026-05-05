@@ -21,7 +21,7 @@ pandas==2.2.0
 openpyxl==3.1.2
 cryptography==42.0.2
 redis==5.0.1
-httpx==0.26.0
+httpx==0.24.0
 
 # Phase 3 additions
 feedparser==6.0.11
