@@ -33,23 +33,23 @@ async def ingest_csv(
     db.table("ingestion_jobs").insert({
         "id": job_id,
         "tenant_id": tenant_id,
-        "user_id": user_id,
         "file_name": file.filename,
         "data_type": data_type,
         "source": "csv",
         "status": "pending"
     }).execute()
 
-    # 2. Read file content
+    # 2. Read file content and encode as hex for Celery serialisation
     content = await file.read()
+    content_hex = content.hex()
     
     # 3. Queue the background task
     background_tasks.add_task(
         ingest_csv_task, 
+        tenant_id,
         job_id, 
-        content, 
-        data_type, 
-        tenant_id, 
+        content_hex,
+        file.filename,
         default_city
     )
 
@@ -65,5 +65,30 @@ async def get_job_status(job_id: str, current_user: dict = Depends(get_current_u
     
     if not res.data:
         raise HTTPException(status_code=404, detail="Job not found.")
-        
-    return res.data
+
+    job = res.data
+
+    # Map internal pipeline_stage to a frontend-friendly label and progress %
+    STAGE_MAP = {
+        None:                  {"label": "Uploading data...",            "progress": 5},
+        "pending":             {"label": "Uploading data...",            "progress": 5},
+        "processing":          {"label": "Cleaning & validating data...", "progress": 20},
+        "classifying":         {"label": "Classifying products...",       "progress": 40},
+        "tagging_signals":     {"label": "Extracting market signals...",  "progress": 55},
+        "scoring_skus":        {"label": "Scoring your catalogue...",     "progress": 70},
+        "generating_insights": {"label": "Generating AI insights...",     "progress": 85},
+        "complete":            {"label": "Intelligence ready!",           "progress": 100},
+        # Error states
+        "failed":              {"label": "Processing failed.",            "progress": 0},
+    }
+
+    stage = job.get("pipeline_stage") or job.get("status")
+    stage_info = STAGE_MAP.get(stage, {"label": "Processing...", "progress": 50})
+
+    return {
+        **job,
+        "stage_label": stage_info["label"],
+        "progress": stage_info["progress"],
+        "is_complete": stage == "complete",
+        "is_failed": job.get("status") == "failed" or stage == "failed",
+    }

@@ -2,7 +2,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, intelligence, catalogue, ingest, integrations, dashboard
+from app.routers import auth, intelligence, catalogue, ingest, integrations, dashboard, settings
 from app.migrations import run_migrations
 
 
@@ -43,6 +43,7 @@ app.include_router(catalogue.router, prefix=f"{API_V1}/catalogue", tags=["Catalo
 app.include_router(ingest.router, prefix=f"{API_V1}/ingest", tags=["Ingestion"])
 app.include_router(integrations.router, prefix=f"{API_V1}/integrations", tags=["Integrations"])
 app.include_router(dashboard.router, prefix=f"{API_V1}/dashboard", tags=["Dashboard"])
+app.include_router(settings.router, prefix=f"{API_V1}/settings", tags=["Settings"])
 
 if __name__ == "__main__":
     import uvicorn

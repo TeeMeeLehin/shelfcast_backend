@@ -146,9 +146,9 @@ def dispatch_competitor_scraper(url: str, target_value: str, competitor_name: st
 @shared_task(name="tasks.process_general_signals_task")
 def process_general_signals_task():
     """Runs the AI pipeline to tag raw general_pulse signals."""
-    from ai.signal_tagger import process_unprocessed_signals
+    from ai.tagger import signal_tagger
     try:
-        count = process_unprocessed_signals()
+        count = signal_tagger.process_unprocessed_signals()
         return {"processed": count}
     except Exception as e:
         logger.error("process_general_signals_task failed: %s", e)

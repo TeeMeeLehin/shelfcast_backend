@@ -263,8 +263,8 @@ async def invite_user(request: InviteRequest, current_user: dict = Depends(requi
             "message": f"User {request.email} created successfully.",
             "user_id": invited_user_id,
             "email_sent": email_sent,
-            # Return temp_password so admin can share it if email is not configured
-            "temp_password": temp_password if not email_sent else "[sent via email]",
+            # Only return temp_password if email failed (so admin can share it manually)
+            **({"temp_password": temp_password} if not email_sent else {}),
         }
 
     except Exception as e:

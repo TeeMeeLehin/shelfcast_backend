@@ -39,9 +39,8 @@ class ScoringEngine:
         # 2. Fetch Processed Signals (Last 48 hours to be safe)
         lookback = (datetime.fromisoformat(run_date) - timedelta(days=2)).isoformat()
         
-        # In a real SQL query, we'd use ANY or overlaps. 
-        # Using Supabase client, we fetch all processed recent signals for the tenant (or global)
-        # and filter in memory for MVP simplicity.
+        # Fetch all processed recent signals (raw_signals is global by design, no tenant_id column)
+        # We filter by matching against the SKU's search terms to ensure tenant isolation
         sig_res = supabase.table("raw_signals").select("*").eq("is_processed", True).gte("collected_at", lookback).execute()
         
         matched_signals = []

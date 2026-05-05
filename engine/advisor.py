@@ -61,16 +61,6 @@ class InvestmentAdvisor:
                 "health_score": round(self._calculate_health_score(runs), 1)
             }
         }
-                
-        return {
-            "run_date": latest_run_date,
-            "metrics": {
-                "total_inventory_value": round(total_inventory_value, 2),
-                "capital_at_risk": round(capital_at_risk, 2),
-                "opportunity_value": round(opportunity_value, 2),
-                "health_score": round(self._calculate_health_score(runs), 1)
-            }
-        }
 
     def get_stocking_actions(self, tenant_id: str) -> dict:
         """Categorizes SKUs for the Market Opportunities page."""
@@ -158,12 +148,12 @@ class InvestmentAdvisor:
             for r in runs: r["catalogue"] = sku_map.get(r["sku_id"], {})
             return runs
 
-    def get_sku_root_cause(self, sku_id: str) -> dict:
+    def get_sku_root_cause(self, tenant_id: str, sku_id: str) -> dict:
         """
         Provides detailed analysis for the Root Cause Analysis page.
         """
-        # Fetch latest run for this SKU
-        res = supabase.table("intelligence_runs").select("*").eq("sku_id", sku_id).order("run_date", desc=True).limit(1).execute()
+        # Fetch latest run for this SKU with tenant isolation
+        res = supabase.table("intelligence_runs").select("*").eq("tenant_id", tenant_id).eq("sku_id", sku_id).order("run_date", desc=True).limit(1).execute()
         if not res.data:
             return {"error": "No intelligence data found for this SKU."}
             

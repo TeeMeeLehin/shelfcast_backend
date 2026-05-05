@@ -24,13 +24,23 @@ class NarratorEngine:
             except Exception:
                 logger.warning("Anthropic client initialization failed.")
 
-    def generate_sku_narrative(self, sku_id: str, sku_name: str, score_data: dict) -> str:
+    def generate_sku_narrative(self, tenant_id: str, sku_id: str, sku_name: str) -> str:
         """
         Generates a 2-3 sentence insight explaining the SKU's score.
+        Uses context_builder for tenant-isolated data access.
         """
-        composite_score = score_data.get("composite_score", 50)
-        breakdown = score_data.get("score_breakdown", {})
-        signals = score_data.get("matched_signals", [])
+        from ai.context_builder import build_sku_context
+        
+        # Get tenant-isolated context
+        context = build_sku_context(tenant_id, sku_id)
+        
+        if "error" in context:
+            logger.error(f"Failed to build context for SKU {sku_id}: {context['error']}")
+            return "Unable to generate narrative due to data access error."
+        
+        composite_score = context.get("composite_score", 50)
+        breakdown = context.get("score_breakdown", {})
+        signals = context.get("matched_signals", [])
         
         # Extract top 3 highest impact signals to feed the LLM
         top_signals = sorted(signals, key=lambda x: x.get("impact_score", 0), reverse=True)[:3]

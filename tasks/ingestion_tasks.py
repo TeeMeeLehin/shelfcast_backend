@@ -27,6 +27,14 @@ celery_app.conf.update(
             "task": "tasks.run_nightly_collection",
             "schedule": crontab(hour=1, minute=0),  # 01:00 AM
         },
+        "run-intelligence-pipeline": {
+            "task": "tasks.run_intelligence_pipeline",
+            "schedule": crontab(hour=3, minute=0),  # 03:00 AM
+        },
+        "send-email-digests": {
+            "task": "tasks.send_manager_digests",
+            "schedule": crontab(hour=6, minute=0),  # 06:00 AM
+        },
     }
 )
 
@@ -39,13 +47,20 @@ def ingest_csv_task(self, tenant_id: str, job_id: str, file_bytes_hex: str, file
     default_city: the uploading user's registered city, used as fallback for rows with no city column.
     """
     from ingestion.csv_importer import run_csv_import
+    from app.db import supabase
 
     try:
         file_bytes = bytes.fromhex(file_bytes_hex)
         result = run_csv_import(tenant_id, job_id, file_bytes, filename, default_city)
 
-        # Trigger classification as a follow-up task
-        classify_skus_task.delay(tenant_id)
+        # Update job status to reflect ingestion is done, classification starting
+        supabase.table("ingestion_jobs").update({
+            "pipeline_stage": "classifying"
+        }).eq("id", job_id).execute()
+
+        # Pass job_id so classify_skus_task can store the intelligence task ID
+        # for end-to-end frontend progress tracking
+        classify_skus_task.delay(tenant_id, ingestion_job_id=job_id)
 
         return result
 
@@ -55,12 +70,33 @@ def ingest_csv_task(self, tenant_id: str, job_id: str, file_bytes_hex: str, file
 
 
 @celery_app.task(name="tasks.classify_skus", bind=True, max_retries=2)
-def classify_skus_task(self, tenant_id: str):
-    """Run GPT-4o classification on all pending SKUs for a tenant."""
+def classify_skus_task(self, tenant_id: str, ingestion_job_id: str | None = None):
+    """
+    Run GPT-4o classification on all pending SKUs for a tenant.
+    After classification completes, triggers the intelligence pipeline immediately
+    for manual CSV uploads (since they don't wait for nightly scheduled runs).
+    """
     from ai.classifier import classify_unclassified_skus
 
     try:
-        return classify_unclassified_skus(tenant_id)
+        result = classify_unclassified_skus(tenant_id)
+        
+        # Trigger intelligence pipeline immediately after classification.
+        # This ensures manual CSV uploads get intelligence insights right away
+        # instead of waiting for the nightly scheduled run.
+        from tasks.intelligence_tasks import run_intelligence_pipeline
+        logger.info(f"Triggering intelligence pipeline for tenant {tenant_id} after CSV ingestion")
+        intel_task = run_intelligence_pipeline.delay(tenant_id=tenant_id, ingestion_job_id=ingestion_job_id)
+        
+        # If this was triggered from a CSV upload, store the Celery task ID
+        # on the ingestion_job so the frontend can track end-to-end progress.
+        if ingestion_job_id:
+            from app.db import supabase
+            supabase.table("ingestion_jobs").update({
+                "intelligence_task_id": intel_task.id
+            }).eq("id", ingestion_job_id).execute()
+        
+        return result
     except Exception as exc:
         logger.error("classify_skus_task failed for tenant %s: %s", tenant_id, exc)
         raise self.retry(exc=exc, countdown=120)

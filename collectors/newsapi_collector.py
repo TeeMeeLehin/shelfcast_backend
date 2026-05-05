@@ -16,7 +16,7 @@ from collectors.base import BaseCollector, CollectorResult
 
 logger = logging.getLogger(__name__)
 
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "0f8c7712f5a74e46a4be2f37450cc6a7")
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 NEWSAPI_BASE = "https://newsapi.org/v2/everything"
 
 

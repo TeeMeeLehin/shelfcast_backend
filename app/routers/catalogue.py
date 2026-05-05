@@ -1,9 +1,19 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel
 from app.db import get_db
-from app.deps import get_current_tenant
+from app.deps import get_current_tenant, require_admin
 from typing import List, Optional
 
 router = APIRouter()
+
+class CatalogueUpdateRequest(BaseModel):
+    sku_name: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    unit_price: Optional[float] = None
+    stock_level: Optional[float] = None
+    match_terms: Optional[List[str]] = None
+    is_active: Optional[bool] = None
 
 @router.get("/stats")
 async def get_catalogue_stats(tenant_id: str = Depends(get_current_tenant)):
@@ -95,3 +105,50 @@ async def get_product_detail(sku_id: str, tenant_id: str = Depends(get_current_t
         raise HTTPException(status_code=404, detail="Product not found")
         
     return res.data
+
+@router.patch("/{sku_id}")
+async def update_product(
+    sku_id: str,
+    request: CatalogueUpdateRequest,
+    tenant_id: str = Depends(get_current_tenant),
+    current_user: dict = Depends(require_admin)
+):
+    """
+    Update catalogue item fields. Admin-only access.
+    """
+    db = get_db()
+    
+    # Verify SKU exists and belongs to tenant
+    existing = db.table("catalogue").select("*").eq("tenant_id", tenant_id).eq("sku_id", sku_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    # Build update dict with only provided fields
+    update_data = {}
+    if request.sku_name is not None:
+        update_data["sku_name"] = request.sku_name
+    if request.brand is not None:
+        update_data["brand"] = request.brand
+    if request.category is not None:
+        update_data["category"] = request.category
+    if request.unit_price is not None:
+        update_data["unit_price"] = request.unit_price
+    if request.stock_level is not None:
+        update_data["stock_level"] = request.stock_level
+    if request.match_terms is not None:
+        update_data["match_terms"] = request.match_terms
+    if request.is_active is not None:
+        update_data["is_active"] = request.is_active
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    try:
+        res = db.table("catalogue").update(update_data).eq("tenant_id", tenant_id).eq("sku_id", sku_id).execute()
+        return {
+            "message": "Product updated successfully",
+            "sku_id": sku_id,
+            "updated_fields": list(update_data.keys())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Update failed: {str(e)}")
