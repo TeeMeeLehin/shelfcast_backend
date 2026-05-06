@@ -39,9 +39,9 @@ def recompile():
             
             # Generate new narrative using OpenAI
             new_narrative = narrator_engine.generate_sku_narrative(
+                tenant_id=run["tenant_id"],
                 sku_id=run["sku_id"],
-                sku_name=sku_name,
-                score_data=score_data
+                sku_name=sku_name
             )
             
             # Update the DB

@@ -25,23 +25,11 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
 
-  celery_worker:
-    build: .
-    container_name: shelfcast_celery_worker
-    command: celery -A tasks.ingestion_tasks worker --loglevel=info
-    env_file:
-      - .env
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      - redis
-      - api
-    restart: unless-stopped
-
-  celery_beat:
-    build: .
-    container_name: shelfcast_celery_beat
-    command: celery -A tasks.ingestion_tasks beat --loglevel=info
+  celery:
+    build:
+      context: .
+      dockerfile: celery.Dockerfile
+    container_name: shelfcast_celery
     env_file:
       - .env
     environment:
