@@ -26,10 +26,9 @@ services:
     restart: unless-stopped
 
   celery:
-    build:
-      context: .
-      dockerfile: celery.Dockerfile
+    image: shelfcast_api
     container_name: shelfcast_celery
+    command: celery -A tasks.ingestion_tasks.celery_app worker -l info -B
     env_file:
       - .env
     environment:
