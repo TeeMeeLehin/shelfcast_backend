@@ -3,6 +3,7 @@ version: '3.8'
 services:
   api:
     build: .
+    image: shelfcast_backend:latest
     container_name: shelfcast_api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
@@ -26,7 +27,7 @@ services:
     restart: unless-stopped
 
   celery:
-    image: shelfcast_api
+    image: shelfcast_backend:latest
     container_name: shelfcast_celery
     command: celery -A tasks.ingestion_tasks.celery_app worker -l info -B
     env_file:
