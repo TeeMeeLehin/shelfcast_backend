@@ -12,6 +12,7 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
     depends_on:
       - redis
     restart: unless-stopped
@@ -34,6 +35,7 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
     depends_on:
       - redis
     restart: unless-stopped
