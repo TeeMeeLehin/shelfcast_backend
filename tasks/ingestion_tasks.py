@@ -78,33 +78,79 @@ def ingest_csv_task(self, tenant_id: str, job_id: str, file_bytes_hex: str, file
 def classify_skus_task(self, tenant_id: str, ingestion_job_id: str | None = None):
     """
     Run GPT-4o classification on all pending SKUs for a tenant.
-    After classification completes, triggers the intelligence pipeline immediately
-    for manual CSV uploads (since they don't wait for nightly scheduled runs).
+    After classification completes, triggers the bootstrap intelligence task which
+    first collects fresh signals, then runs the intelligence pipeline.
     """
     from ai.classifier import classify_unclassified_skus
 
     try:
         result = classify_unclassified_skus(tenant_id)
-        
-        # Trigger intelligence pipeline immediately after classification.
-        # This ensures manual CSV uploads get intelligence insights right away
-        # instead of waiting for the nightly scheduled run.
-        from tasks.intelligence_tasks import run_intelligence_pipeline
-        logger.info(f"Triggering intelligence pipeline for tenant {tenant_id} after CSV ingestion")
-        intel_task = run_intelligence_pipeline.delay(tenant_id=tenant_id, ingestion_job_id=ingestion_job_id)
-        
-        # If this was triggered from a CSV upload, store the Celery task ID
-        # on the ingestion_job so the frontend can track end-to-end progress.
-        if ingestion_job_id:
-            from app.db import supabase
-            supabase.table("ingestion_jobs").update({
-                "intelligence_task_id": intel_task.id
-            }).eq("id", ingestion_job_id).execute()
-        
+
+        # Trigger bootstrap: collects signals first, then scores and narrates.
+        # This ensures the very first CSV upload produces real market intelligence
+        # without waiting for the 1 AM nightly schedule.
+        logger.info(f"Classification done for tenant {tenant_id}. Triggering bootstrap intelligence collection.")
+        bootstrap_intelligence_task.delay(tenant_id=tenant_id, ingestion_job_id=ingestion_job_id)
+
         return result
     except Exception as exc:
         logger.error("classify_skus_task failed for tenant %s: %s", tenant_id, exc)
         raise self.retry(exc=exc, countdown=120)
+
+
+@celery_app.task(name="tasks.bootstrap_intelligence", bind=True, max_retries=1)
+def bootstrap_intelligence_task(self, tenant_id: str, ingestion_job_id: str | None = None):
+    """
+    One-shot bootstrap task triggered immediately after a CSV upload.
+
+    Runs the full signal collection pipeline SYNCHRONOUSLY (sync=True) so all
+    collectors complete before the intelligence pipeline scores the SKUs.
+    This guarantees the first run produces real market intelligence rather than
+    defaulting to neutral 50/100 scores.
+
+    Subsequent runs happen on the nightly schedule (1 AM → 3 AM).
+    """
+    from app.db import supabase as db
+
+    def _stage(stage: str):
+        if ingestion_job_id:
+            db.table("ingestion_jobs").update({
+                "pipeline_stage": stage
+            }).eq("id", ingestion_job_id).execute()
+
+    try:
+        _stage("collecting_signals")
+        logger.info(f"[Bootstrap] Starting synchronous signal collection for tenant {tenant_id}...")
+
+        # Import here to avoid circular deps at module level
+        from tasks.signal_tasks import run_nightly_collection
+
+        # sync=True makes the sub-tasks (corpus generation, collectors) run
+        # in-process and block until complete, so we know signals exist when
+        # the intelligence pipeline starts.
+        collection_result = run_nightly_collection(tenant_id=tenant_id, sync=True)
+        logger.info(f"[Bootstrap] Signal collection complete: {collection_result}")
+
+        # Now trigger the intelligence pipeline (async is fine here — signals are in DB)
+        _stage("scoring_skus")
+        from tasks.intelligence_tasks import run_intelligence_pipeline
+        intel_task = run_intelligence_pipeline.delay(
+            tenant_id=tenant_id,
+            ingestion_job_id=ingestion_job_id
+        )
+
+        # Record the intelligence task ID for frontend status tracking
+        if ingestion_job_id:
+            db.table("ingestion_jobs").update({
+                "intelligence_task_id": intel_task.id
+            }).eq("id", ingestion_job_id).execute()
+
+        logger.info(f"[Bootstrap] Intelligence pipeline dispatched (task {intel_task.id}).")
+        return {"status": "bootstrapped", "collection": collection_result}
+
+    except Exception as exc:
+        logger.error("[Bootstrap] bootstrap_intelligence_task failed for tenant %s: %s", tenant_id, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=60)
 
 
 @celery_app.task(name="tasks.sync_quickbooks", bind=True, max_retries=3)
