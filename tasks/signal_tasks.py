@@ -43,6 +43,13 @@ def run_nightly_collection(tenant_id: str | None = None, sync: bool = False):
     
     logger.info(f"Using Smart Corpus: {len(final_corpus)} unique keywords for collection.")
             
+    # If running synchronously (bootstrap mode), limit to top 5 keywords
+    # to prevent the frontend from timing out (collection takes ~2s per keyword).
+    # The remaining keywords will be naturally picked up in the next nightly run.
+    if sync and len(final_corpus) > 5:
+        logger.info(f"Bootstrap mode: Limiting sync collection to top 5 keywords from {len(final_corpus)} total.")
+        final_corpus = final_corpus[:5]
+            
     for term in final_corpus:
         if sync: dispatch_keyword_collectors(term)
         else: dispatch_keyword_collectors.delay(term)
